@@ -1,1 +1,433 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"/>
+  <meta name="mobile-web-app-capable" content="yes"/>
+  <meta name="apple-mobile-web-app-capable" content="yes"/>
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
+  <title>Boerenbridge Pro</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;700;900&family=Crimson+Pro:ital,wght@0,400;0,600;1,400&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet">
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+    body { 
+      background: #080f0a; 
+      overflow: hidden; 
+      font-family: 'Crimson Pro', serif;
+      color: white;
+      touch-action: manipulation;
+    }
+    .felt-bg {
+      background-color: #064e3b;
+      background-image: url("https://www.transparenttextures.com/patterns/felt.png");
+    }
+    .modal-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.85);
+      backdrop-filter: blur(8px);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+      padding: 20px;
+    }
+    @keyframes slideUp {
+      from { transform: translateY(20px); opacity: 0; }
+      to { transform: translateY(0); opacity: 1; }
+    }
+    .modal-content {
+      background: #1e293b;
+      border: 1px solid #c2933a;
+      border-radius: 24px;
+      width: 100%;
+      max-width: 400px;
+      padding: 24px;
+      animation: slideUp 0.3s ease-out;
+    }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState, useEffect, useCallback, useMemo } = React;
 
+    /* --- Constants --- */
+    const ROUND_SEQ = [1, 2, 3, 4, 5, 6, 7, 7, 7, 6, 5, 4, 3, 2, 1];
+    const SUITS = ['spades', 'hearts', 'diamonds', 'clubs'];
+    const PLAYER_NAMES = ['Jij', 'Alice', 'Bob', 'Carol'];
+    const SYM = { spades: '♠', hearts: '♥', diamonds: '♦', clubs: '♣' };
+    const AV_COLORS = ['#c2933a', '#2d7d6b', '#7c4fa0', '#b84a62'];
+
+    const IS_RED = s => s === 'hearts' || s === 'diamonds';
+    const RANK_LBL = r => r <= 10 ? String(r) : { 11: 'J', 12: 'Q', 13: 'K', 14: 'A' }[r];
+
+    /* --- Helpers --- */
+    const createDeck = () => SUITS.flatMap(s => [2,3,4,5,6,7,8,9,10,11,12,13,14].map(r => ({ suit: s, rank: r })));
+    const shuffle = d => {
+      const a = [...d];
+      for (let i = a.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [a[i], a[j]] = [a[j], a[i]];
+      }
+      return a;
+    };
+
+    const determineWinner = (trick, trump) => {
+      const lead = trick[0].card.suit;
+      let wi = 0, best = trick[0].card;
+      for (let i = 1; i < trick.length; i++) {
+        const c = trick[i].card;
+        if (c.suit === trump && best.suit !== trump) { best = c; wi = i; }
+        else if (c.suit === best.suit && c.rank > best.rank) { best = c; wi = i; }
+      }
+      return trick[wi].playerId;
+    };
+
+    /* --- UI Components --- */
+    function PlayingCard({ card, onClick, selectable, illegal, size = 'md', style = {}, zIndex = 1 }) {
+      const isRed = IS_RED(card.suit);
+      const isSmall = size === 'sm';
+      const w = isSmall ? 54 : 85;
+      const h = isSmall ? 76 : 120;
+
+      return (
+        <div
+          onClick={selectable && !illegal ? onClick : undefined}
+          style={{
+            width: w, height: h,
+            background: 'white',
+            borderRadius: isSmall ? 6 : 10,
+            border: selectable ? '2.5px solid #c2933a' : '1px solid #ddd',
+            boxShadow: '0 4px 8px rgba(0,0,0,0.2)',
+            display: 'flex', flexDirection: 'column', justifyContent: 'space-between',
+            padding: isSmall ? '4px' : '8px',
+            position: 'relative', cursor: selectable ? 'pointer' : 'default',
+            userSelect: 'none', 
+            zIndex: zIndex,
+            opacity: illegal ? 0.4 : 1,
+            ...style
+          }}
+        >
+          <div style={{ color: isRed ? '#e11d48' : '#1e293b', fontSize: isSmall ? 12 : 16, fontWeight: '900', lineHeight: 1 }}>
+            {RANK_LBL(card.rank)}<br/>{SYM[card.suit]}
+          </div>
+          <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: isSmall ? 28 : 44, color: isRed ? '#e11d48' : '#1e293b', opacity: 0.1 }}>
+            {SYM[card.suit]}
+          </div>
+          <div style={{ color: isRed ? '#e11d48' : '#1e293b', fontSize: isSmall ? 12 : 16, fontWeight: '900', lineHeight: 1, transform: 'rotate(180deg)', textAlign: 'left' }}>
+            {RANK_LBL(card.rank)}<br/>{SYM[card.suit]}
+          </div>
+        </div>
+      );
+    }
+
+    function FanHand({ hand, onPlay, isMyTurn, trick }) {
+      const [hoverIdx, setHoverIdx] = useState(null);
+      const isMobile = window.innerWidth < 768;
+      
+      const legalIdxs = useMemo(() => {
+        if (!isMyTurn) return [];
+        if (!trick.length) return hand.map((_, i) => i);
+        const lead = trick[0].card.suit;
+        const hasLead = hand.some(c => c.suit === lead);
+        return hasLead ? hand.map((_, i) => i).filter(i => hand[i].suit === lead) : hand.map((_, i) => i);
+      }, [hand, trick, isMyTurn]);
+
+      const total = hand.length;
+      const mid = (total - 1) / 2;
+
+      return (
+        <div style={{ 
+          display: 'flex', justifyContent: 'center', alignItems: 'flex-end', 
+          position: 'relative', height: isMobile ? 130 : 160, width: '100%',
+          maxWidth: '600px', margin: '0 auto',
+          paddingBottom: '10px'
+        }}>
+          {hand.map((card, i) => {
+            const offset = i - mid;
+            // Verbeterde ruimere waaier voor mobiel
+            const spread = isMobile ? Math.min(38, (window.innerWidth - 60) / (total + 1)) : 55;
+            const rot = total > 1 ? offset * (isMobile ? 8 : 10) : 0;
+            const tx = offset * spread;
+            const ty = Math.abs(offset) * Math.abs(offset) * (isMobile ? 2.5 : 4);
+            
+            const isHovered = hoverIdx === i;
+            const isLegal = legalIdxs.includes(i);
+
+            return (
+              <div 
+                key={i}
+                onMouseEnter={() => setHoverIdx(i)}
+                onMouseLeave={() => setHoverIdx(null)}
+                style={{
+                  position: 'absolute',
+                  bottom: 10,
+                  left: '50%',
+                  transform: `translateX(calc(-50% + ${tx}px)) rotate(${rot}deg) translateY(${ty}px) ${isHovered && isLegal ? 'translateY(-35px) scale(1.15)' : ''}`,
+                  transformOrigin: 'bottom center',
+                  zIndex: isHovered ? 100 : i,
+                  transition: 'transform 0.2s cubic-bezier(0.2, 0.8, 0.2, 1)',
+                }}
+              >
+                <PlayingCard 
+                  card={card} 
+                  size={isMobile ? 'sm' : 'md'} 
+                  selectable={isMyTurn && isLegal}
+                  illegal={isMyTurn && !isLegal}
+                  onClick={() => onPlay(i)}
+                />
+              </div>
+            );
+          })}
+        </div>
+      );
+    }
+
+    /* --- Main App --- */
+    function App() {
+      const [gameState, setGameState] = useState('setup');
+      const [roundIdx, setRoundIdx] = useState(0);
+      const [players, setPlayers] = useState(PLAYER_NAMES.map((name, i) => ({ id: i, name, score: 0, hand: [], bid: 0, tricksWon: 0 })));
+      const [dealerIdx, setDealerIdx] = useState(0);
+      const [currentIdx, setCurrentIdx] = useState(0);
+      const [trump, setTrump] = useState(null);
+      const [trick, setTrick] = useState([]);
+      const [showScore, setShowScore] = useState(false);
+
+      const numCards = ROUND_SEQ[roundIdx];
+
+      useEffect(() => {
+        if (window.lucide) lucide.createIcons();
+      }, [gameState, showScore]);
+
+      const startRound = () => {
+        const deck = shuffle(createDeck());
+        const newPlayers = players.map((p, i) => ({
+          ...p,
+          hand: deck.splice(0, numCards),
+          bid: 0,
+          tricksWon: 0
+        }));
+        const trumpCard = deck.length > 0 ? deck[0] : null;
+        setTrump(trumpCard ? trumpCard.suit : null);
+        setPlayers(newPlayers);
+        setGameState('bidding');
+        setCurrentIdx((dealerIdx + 1) % 4);
+        setTrick([]);
+      };
+
+      const handleBid = (val) => {
+        const nextPlayers = [...players];
+        nextPlayers[currentIdx].bid = val;
+        setPlayers(nextPlayers);
+        
+        if ((currentIdx + 1) % 4 === (dealerIdx + 1) % 4) {
+          setGameState('playing');
+          setCurrentIdx((dealerIdx + 1) % 4);
+        } else {
+          setCurrentIdx((currentIdx + 1) % 4);
+        }
+      };
+
+      const playCard = (pIdx, cIdx) => {
+        const nextPlayers = [...players];
+        const card = nextPlayers[pIdx].hand.splice(cIdx, 1)[0];
+        const nextTrick = [...trick, { playerId: pIdx, card }];
+        
+        setPlayers(nextPlayers);
+        setTrick(nextTrick);
+
+        if (nextTrick.length === 4) {
+          setTimeout(() => {
+            const winnerId = determineWinner(nextTrick, trump);
+            const updatedPlayers = nextPlayers.map(p => 
+              p.id === winnerId ? { ...p, tricksWon: p.tricksWon + 1 } : p
+            );
+            
+            setPlayers(updatedPlayers);
+            setTrick([]);
+            
+            if (updatedPlayers[0].hand.length === 0) {
+              const scoredPlayers = updatedPlayers.map(p => {
+                const diff = Math.abs(p.bid - p.tricksWon);
+                const pts = diff === 0 ? (5 + p.tricksWon * 2) : (diff * -2);
+                return { ...p, score: p.score + pts };
+              });
+              setPlayers(scoredPlayers);
+              setGameState('round_end');
+            } else {
+              setCurrentIdx(winnerId);
+            }
+          }, 800);
+        } else {
+          setCurrentIdx((pIdx + 1) % 4);
+        }
+      };
+
+      // AI
+      useEffect(() => {
+        if (gameState === 'bidding' && currentIdx !== 0) {
+          const t = setTimeout(() => handleBid(Math.floor(Math.random() * (numCards / 2))), 600);
+          return () => clearTimeout(t);
+        }
+        if (gameState === 'playing' && currentIdx !== 0 && trick.length < 4) {
+          const t = setTimeout(() => {
+            const hand = players[currentIdx].hand;
+            let idx = 0;
+            if (trick.length > 0) {
+              const lead = trick[0].card.suit;
+              const match = hand.findIndex(c => c.suit === lead);
+              idx = match !== -1 ? match : 0;
+            }
+            playCard(currentIdx, idx);
+          }, 800);
+          return () => clearTimeout(t);
+        }
+      }, [gameState, currentIdx, trick.length]);
+
+      return (
+        <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+          {/* Header */}
+          <div style={{ padding: '12px 20px', background: '#0f172a', borderBottom: '1px solid #334155', display: 'flex', justifyContent: 'space-between', alignItems: 'center', zIndex: 100 }}>
+            <div>
+              <h1 style={{ fontSize: '16px', fontWeight: '900', color: '#c2933a', letterSpacing: '1px', fontFamily: "'Cinzel', serif" }}>BOERENBRIDGE<span style={{color:'white'}}>PRO</span></h1>
+              <p style={{ fontSize: '10px', color: '#94a3b8', textTransform: 'uppercase', fontFamily: "'JetBrains Mono', monospace" }}>Ronde {roundIdx + 1} • {numCards} Kaarten</p>
+            </div>
+            
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              {trump && (
+                <div style={{ fontSize: '20px', color: IS_RED(trump) ? '#fb7185' : '#60a5fa', background: 'rgba(255,255,255,0.05)', padding: '2px 10px', borderRadius: '12px' }}>
+                  {SYM[trump]}
+                </div>
+              )}
+              <button 
+                onClick={() => setShowScore(true)}
+                style={{ background: 'none', border: '1px solid #334155', color: '#94a3b8', padding: '6px', borderRadius: '10px', cursor: 'pointer' }}
+              >
+                <i data-lucide="layout-list" style={{width: 20, height: 20}}></i>
+              </button>
+            </div>
+          </div>
+
+          {/* Tafel */}
+          <div className="felt-bg" style={{ flex: 1, position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            {players.map((p, i) => {
+              const pos = [
+                { bottom: 20, left: '50%', transform: 'translateX(-50%)' },
+                { left: 15, top: '50%', transform: 'translateY(-50%)' },
+                { top: 20, left: '50%', transform: 'translateX(-50%)' },
+                { right: 15, top: '50%', transform: 'translateY(-50%)' }
+              ][i];
+              const isActive = currentIdx === i;
+              return (
+                <div key={i} style={{ position: 'absolute', ...pos, textAlign: 'center', zIndex: 10 }}>
+                  <div style={{ 
+                    width: 46, height: 46, borderRadius: '18px', background: AV_COLORS[i], 
+                    border: isActive ? '3px solid #c2933a' : '2px solid rgba(255,255,255,0.2)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', fontSize: '18px',
+                    boxShadow: isActive ? '0 0 20px rgba(194,147,58,0.5)' : 'none',
+                    transition: 'all 0.3s'
+                  }}>
+                    {p.name[0]}
+                  </div>
+                  <div style={{ fontSize: '11px', marginTop: '6px', fontWeight: 'bold' }}>
+                    {p.name} {gameState !== 'setup' && <div style={{opacity:0.8}}>B:{p.bid} S:{p.tricksWon}</div>}
+                  </div>
+                </div>
+              );
+            })}
+
+            {/* Trick Area */}
+            <div style={{ position: 'relative', width: 140, height: 140, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              {trick.map((t, i) => {
+                const angle = (t.playerId * 90);
+                return (
+                  <div key={i} style={{ position: 'absolute', transform: `rotate(${angle}deg) translateY(-35px) rotate(-${angle}deg)` }}>
+                    <PlayingCard card={t.card} size="sm" />
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Speel Knop / Biedingen */}
+            {gameState === 'setup' && (
+              <button onClick={startRound} style={{ zIndex: 50, padding: '16px 32px', background: '#c2933a', border: 'none', borderRadius: '16px', fontWeight: '900', fontSize: '16px', color: '#1a0e00', cursor: 'pointer', boxShadow: '0 8px 16px rgba(0,0,0,0.4)', fontFamily: "'Cinzel', serif" }}>
+                START RONDE
+              </button>
+            )}
+
+            {gameState === 'bidding' && currentIdx === 0 && (
+              <div style={{ zIndex: 50, background: '#1e293b', padding: '20px', borderRadius: '24px', textAlign: 'center', border: '1px solid #c2933a', boxShadow: '0 20px 40px rgba(0,0,0,0.5)' }}>
+                <p style={{ color: '#c2933a', fontWeight: '900', marginBottom: '12px', fontSize: '12px', textTransform: 'uppercase' }}>Jouw Bod</p>
+                <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', justifyContent: 'center', maxWidth: '220px' }}>
+                  {Array.from({ length: numCards + 1 }).map((_, b) => (
+                    <button key={b} onClick={() => handleBid(b)} style={{ width: 38, height: 38, borderRadius: '10px', border: '1px solid #334155', background: '#0f172a', color: 'white', fontWeight: 'bold', fontSize: '16px' }}>{b}</button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Scorebord Modal */}
+          {showScore && (
+            <div className="modal-overlay" onClick={() => setShowScore(false)}>
+              <div className="modal-content" onClick={e => e.stopPropagation()}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+                  <h2 style={{ fontFamily: "'Cinzel', serif", color: '#c2933a' }}>STAND</h2>
+                  <button onClick={() => setShowScore(false)} style={{ background: 'none', border: 'none', color: '#94a3b8' }}>
+                    <i data-lucide="x" style={{width: 24, height: 24}}></i>
+                  </button>
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                  {players.sort((a,b) => b.score - a.score).map((p, idx) => (
+                    <div key={p.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', background: 'rgba(255,255,255,0.05)', borderRadius: '14px', border: idx === 0 ? '1px solid #c2933a' : '1px solid transparent' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                        <span style={{ color: '#94a3b8', fontSize: '12px', fontWeight: 'bold' }}>#{idx+1}</span>
+                        <span style={{ fontWeight: 'bold' }}>{p.name}</span>
+                      </div>
+                      <span style={{ fontSize: '18px', fontWeight: '900', color: idx === 0 ? '#c2933a' : 'white' }}>{p.score}</span>
+                    </div>
+                  ))}
+                </div>
+                <button onClick={() => setShowScore(false)} style={{ width: '100%', marginTop: '24px', padding: '12px', borderRadius: '12px', background: '#334155', color: 'white', border: 'none', fontWeight: 'bold' }}>
+                  SLUITEN
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Hand Area */}
+          <div style={{ background: '#0f172a', padding: '10px 0', borderTop: '2px solid #334155', minHeight: '160px' }}>
+            {gameState === 'round_end' ? (
+              <div style={{ textAlign: 'center', padding: '10px' }}>
+                <button 
+                  onClick={() => { setRoundIdx(r => r + 1); setDealerIdx(d => (d + 1) % 4); setGameState('setup'); }} 
+                  style={{ padding: '14px 28px', background: 'white', color: '#0f172a', border: 'none', borderRadius: '12px', fontWeight: '900', fontSize: '14px', textTransform: 'uppercase' }}
+                >
+                  Volgende Ronde
+                </button>
+              </div>
+            ) : (
+              <FanHand 
+                hand={players[0].hand} 
+                isMyTurn={currentIdx === 0 && gameState === 'playing'}
+                onPlay={(i) => playCard(0, i)}
+                trick={trick}
+              />
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+  </script>
+</body>
+</html>
